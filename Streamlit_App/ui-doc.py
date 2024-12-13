@@ -9,8 +9,9 @@ from helper_fns import gan_utils
 import shutil
 import glob
 import SessionState
+import math
 
-MEDIA_ROOT = 'media/documents/'
+MEDIA_ROOT = 'media/documents/v20241204/'
 SIGNATURE_ROOT = 'media/UserSignaturesSquare/'
 YOLO_RESULT = 'results/yolov5/'
 YOLO_OP = 'crops/DLSignature/'
@@ -62,30 +63,41 @@ def signature_verify(selection):
         filename.
         
     '''
-    anchor_image = SIGNATURE_ROOT + selection + '.png'
+    anchor_image = SIGNATURE_ROOT + '1.jpg'
     # verify the anchor signature with the detctions on all documents
-    feature_set = vgg_verify.verify(anchor_image, GAN_OP_RESIZED)
+    feature_set = vgg_verify.verify(anchor_image, GAN_OP_RESIZED, selection)
+    columns = [column for column in st.columns(3)]
+    columns[0].write("### Reference Signature")
+    columns[1].write("### To Verify")
+    columns[2].write("### Score")
+
     for image, score in feature_set:
-        columns = [column for column in st.beta_columns(3)]
+        score = round(score.item()*100,2)
+        columns = [column for column in st.columns(3)]
         columns[0].image(anchor_image)
         columns[1].image(image)
-        columns[2].write(score)
+        columns[2].write(f"### {score}%")
 
-def signature_cleaning(selection, yolo_op):
+def signature_cleaning(selection, yolo_op, det_num):
     ''' Performs signature cleaning and displays the cleaned signatures '''
     # copy files from results/yolo_ops/ to results/gan/gan_signdata_kaggle/gan_ips
     copy_and_overwrite(yolo_op, GAN_IPS)
     test.clean() # performs cleaning
 
     #cleaned images are selected and displayed
-    cleaned_image = select_cleaned_image(selection)
-    st.image(cleaned_image)
+    st.subheader(f"{det_num} signature(s) cleaned")
+    columns = [column for column in st.columns(det_num)]
+    for i, col in enumerate(columns):
+        postfix = '-'+str(i+1) if i > 0 else ''            
+        cleaned_image = select_cleaned_image(selection+postfix)
+        col.image(cleaned_image)
 
 def signature_detection(selection):
     ''' Performs signature detection and returns the results folder. '''
 
     # call YOLOv5 detection fn on all images in the document folder.
-    detect.detect(MEDIA_ROOT)
+    img_det_num = detect.detect(MEDIA_ROOT, selection)
+    det_num = img_det_num[selection]
     # get the path where last detected results are stored.
     latest_detection = max(glob.glob(os.path.join(YOLO_RESULT, '*/')), key=os.path.getmtime)
     # resize and add top and bottom padding to detected sigantures. 
@@ -93,22 +105,27 @@ def signature_detection(selection):
     gan_utils.resize_images(os.path.join(latest_detection, YOLO_OP))
 
     # selects and display the detections of the document which the user selected.
-    selection_detection =latest_detection + YOLO_OP + selection + '.jpg'
-    st.image(selection_detection)
-    return latest_detection + YOLO_OP # return the yolo op folder
+    st.subheader(f"{det_num} signature(s) detected")
+    columns = [column for column in st.columns(det_num)]
+    for i, col in enumerate(columns):
+        postfix = '-'+str(i+1) if i > 0 else ''            
+        selection_detection =latest_detection + YOLO_OP + selection + postfix + '.jpg' 
+        col.image(selection_detection)
+    return latest_detection + YOLO_OP, det_num# return the yolo op folder
 
 def select_document():
     '''
         Selects the document from the dropdown menu and displays the image.
         Returns an integer represeting the id of the document selected.
     '''
-    left, right = st.beta_columns(2) # Create two columns
+    left, right = st.columns([1,2]) # Create two columns
     # dropdown box in left column
-    selection = str(left.selectbox('Select document to run inference', [1, 2]))
+    selection = str(left.selectbox('Select document for verfying:',[1,2,3,4,5,8]))
     # select corresponding document image from media/documents
-    selection_image = MEDIA_ROOT+selection+'.png'
+    selection_image = MEDIA_ROOT+selection+'.jpg'
     #display image in right column.
     right.image(selection_image, use_column_width='always')
+    detect_button = left.button('Detect Signature')
     return selection
 
 def main():
@@ -116,32 +133,24 @@ def main():
     session_state = SessionState.get(
         selection = '',
         yolo_op = '',
-        detect_button = False,
         clean_button = False,
         verify_button = False,
-        
+        detect_num = 0
     )
-    st.write('Deep Learning based Signature Detection and Verification')
-    st.write('Built by [Amal Joseph](https://www.linkedin.com/in/amaljoseph/)')
-    st.write('[Github Repo](https://github.com/amaljoseph)')
-
+    st.header('Deep Learning based Signature Verification')
     
     # Sets the session variable to store the document selected by the user.
     session_state.selection = select_document()
-    
-    detect_button = st.button('Detect Signature')
-    if detect_button:
-        session_state.detect_button = True
-    if session_state.detect_button:
+    session_state.clean_button = True
+    if session_state.clean_button:
         # Performs Signature Detection task if the "Detect Signature" button is pressed.
-        session_state.yolo_op = signature_detection(session_state.selection)
-        
+        session_state.yolo_op,  session_state.detect_num= signature_detection(session_state.selection)
         clean_button = st.button('Clean Signature')
         if clean_button:
             session_state.clean_button = True
         if session_state.clean_button:
             # Performs Signature Cleaning task if the "Clean Signature" button is pressed.
-            signature_cleaning(session_state.selection, session_state.yolo_op)
+            signature_cleaning(session_state.selection, session_state.yolo_op, session_state.detect_num)
         
             verify_button = st.button('Verify Signature')
             if verify_button:
